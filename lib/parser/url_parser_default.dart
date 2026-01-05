@@ -502,4 +502,78 @@ class UrlParserDefault implements UrlParser {
     }
     return _streamController;
   }
+
+  /// Pre-cache by byte size with optional queue and concurrency control.
+  @override
+  Future<StreamController<Map>?> precacheByte(
+    String url,
+    Map<String, Object>? headers,
+    int cacheBytes,
+    int concurrent,
+    int maxQueueTasks,
+    bool downloadNow,
+    bool progressListen,
+  ) async {
+    StreamController<Map>? controller =
+        progressListen ? StreamController<Map>() : null;
+    int targetBytes = cacheBytes <= 0 ? 500 * 1024 : cacheBytes;
+    int concurrentLimit = concurrent <= 0 ? 1 : concurrent;
+    int queueLimit = maxQueueTasks <= 0 ? 3 : maxQueueTasks;
+
+    final int contentLength = await head(url.toSafeUri(), headers: headers);
+    if (contentLength > 0 && targetBytes > contentLength) {
+      targetBytes = contentLength;
+    }
+
+    final List<DownloadTask> tasks = [];
+    final int chunkSize =
+        targetBytes < Config.segmentSize ? targetBytes : Config.segmentSize;
+    int start = 0;
+    while (start < targetBytes) {
+      int end = start + chunkSize - 1;
+      if (end >= targetBytes) end = targetBytes - 1;
+      tasks.add(DownloadTask(
+        uri: url.toSafeUri(),
+        headers: headers,
+        startRange: start,
+        endRange: end,
+      ));
+      start = end + 1;
+    }
+    if (tasks.length > queueLimit) {
+      tasks.removeRange(queueLimit, tasks.length);
+    }
+
+    int finished = 0;
+    Future<void> processTask(DownloadTask task) async {
+      Uint8List? data = await cache(task);
+      if (data == null) {
+        if (downloadNow) {
+          await download(task);
+        } else {
+          await push(task);
+          return;
+        }
+      }
+      finished += 1;
+      controller?.add({
+        'progress': finished / tasks.length,
+        'url': task.url,
+        'startRange': task.startRange,
+        'endRange': task.endRange,
+        'cachedBytes': task.endRange != null
+            ? task.endRange! - task.startRange + 1
+            : task.downloadedBytes,
+      });
+    }
+
+    for (int i = 0; i < tasks.length; i += concurrentLimit) {
+      final List<DownloadTask> batch =
+          tasks.skip(i).take(concurrentLimit).toList();
+      await Future.wait(batch.map(processTask));
+    }
+
+    controller?.close();
+    return controller;
+  }
 }

@@ -37,7 +37,6 @@ class VideoProxy {
   /// [maxStorageCacheSize]: Maximum storage cache size in MB (default: 1024).<br>
   /// [logPrint]: Enables or disables logging output (default: false).<br>
   /// [segmentSize]: Size of each video segment in MB (default: 2).<br>
-  /// [firstSegmentSize]: Size of the first video segment in MB for faster startup (default: same as segmentSize).<br>
   /// [maxConcurrentDownloads]: Maximum number of concurrent downloads (default: 8).<br>
   /// [cacheRootPath]: Optional custom root path for cache directory. If not provided, uses the default application cache directory.<br>
   /// [urlMatcher]: Optional custom URL matcher for video URL filtering.<br>
@@ -46,10 +45,9 @@ class VideoProxy {
     String? ip,
     int? port,
     int maxMemoryCacheSize = 100,
-    int maxStorageCacheSize = 1024,
+    int maxStorageCacheSize = 1024 * 100,
     bool logPrint = false,
     int segmentSize = 2,
-    int? firstSegmentSize,
     int maxConcurrentDownloads = 8,
     String? cacheRootPath,
     UrlMatcher? urlMatcher,
@@ -59,7 +57,6 @@ class VideoProxy {
     Config.memoryCacheSize = maxMemoryCacheSize * Config.mbSize;
     Config.storageCacheSize = maxStorageCacheSize * Config.mbSize;
     Config.segmentSize = segmentSize * Config.mbSize;
-    Config.firstSegmentSize = (firstSegmentSize ?? segmentSize) * Config.mbSize;
 
     // Set custom cache root path if provided.
     if (cacheRootPath != null && cacheRootPath.isNotEmpty) {

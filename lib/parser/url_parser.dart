@@ -58,4 +58,21 @@ abstract class UrlParser {
     bool downloadNow,
     bool progressListen,
   );
+
+  /// Pre-caches the first [cacheBytes] of the given [url].
+  ///
+  /// [cacheBytes]: Target byte size to cache.
+  /// [concurrent]: Maximum concurrent chunk downloads.
+  /// [maxQueueTasks]: Maximum chunk tasks to create (queue length).
+  /// [downloadNow]: Whether to start immediately or enqueue.
+  /// [progressListen]: Whether to emit progress updates.
+  Future<StreamController<Map>?> precacheByte(
+    String url,
+    Map<String, Object>? headers,
+    int cacheBytes,
+    int concurrent,
+    int maxQueueTasks,
+    bool downloadNow,
+    bool progressListen,
+  );
 }

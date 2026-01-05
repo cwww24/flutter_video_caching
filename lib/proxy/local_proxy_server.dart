@@ -122,6 +122,8 @@ class LocalProxyServer {
   /// extracts method, path, protocol, and headers,
   /// and delegates further processing to VideoCaching.
   Future<void> _handleConnection(Socket socket) async {
+    final DateTime startTime = DateTime.now();
+    bool logged = false;
     try {
       logV('_handleConnection start');
       StringBuffer buffer = StringBuffer();
@@ -160,14 +162,75 @@ class LocalProxyServer {
         }
 
         // Convert the path to a Uri object.
-        Uri originUri = path.toOriginUri();
-        logD('Handling Connections ========================================> \n'
-            'protocol: $protocol, method: $method, path: $path \n'
-            'headers: $headers \n'
-            '$originUri');
+        // Support both absolute URI format (http://host/path) and relative path format
+        Uri originUri;
+        if (path.startsWith('http://') || path.startsWith('https://')) {
+          // Absolute URI format (proxy-style request)
+          originUri = path.toSafeUri();
+        } else {
+          // Relative path format - try to restore from origin param or build from Host header
+          String originUrl = path.toOriginUrl();
+          if (originUrl == path && !path.startsWith('http')) {
+            // No origin param found, try to build from Host header
+            String? host = headers['host'];
+            if (host != null && host.isNotEmpty) {
+              // Build full URL from Host header
+              String scheme = headers.containsKey('x-forwarded-proto') 
+                  ? headers['x-forwarded-proto']! 
+                  : 'http';
+              originUrl = '$scheme://$host$path';
+              originUri = originUrl.toSafeUri();
+            } else {
+              // Fallback to original behavior
+              originUri = path.toOriginUri();
+            }
+          } else {
+            originUri = originUrl.toSafeUri();
+          }
+        }
+        logD('Handling Connections ============>'  'protocol: $protocol, method: $method, path: $path ''headers: $headers ' 'originUri: $originUri');
+
+        // Clean headers: remove proxy server's Host header to avoid conflicts
+        // when requesting local network servers. HttpClient will automatically
+        // set the correct Host header from the URI, so we should remove
+        // any Host header that points to the proxy server itself.
+        Map<String, String> cleanedHeaders = Map<String, String>.from(headers);
+        String? hostHeader = cleanedHeaders['host'];
+        if (hostHeader != null) {
+          // Check if Host header points to proxy server
+          bool isProxyHost = hostHeader == Config.serverUrl ||
+              hostHeader == '${Config.ip}:${Config.port}' ||
+              (hostHeader == Config.ip && originUri.host != Config.ip);
+          
+          // If Host header points to proxy server, remove it
+          // Otherwise, keep it if it matches the target server (for local network)
+          if (isProxyHost) {
+            cleanedHeaders.remove('host');
+          } else {
+            // Verify the Host header matches the target URI
+            // If not, remove it to let HttpClient set it correctly
+            String expectedHost = originUri.hasPort 
+                ? '${originUri.host}:${originUri.port}'
+                : originUri.host;
+            if (hostHeader != expectedHost && hostHeader != originUri.host) {
+              cleanedHeaders.remove('host');
+            }
+          }
+        }
+        // Also remove other proxy-related headers that might interfere
+        cleanedHeaders.remove('x-forwarded-host');
+        cleanedHeaders.remove('x-forwarded-for');
 
         // Delegate request handling to VideoCaching.
-        await VideoCaching.parse(socket, originUri, headers);
+        await VideoCaching.parse(socket, originUri, cleanedHeaders);
+        if (!logged) {
+          logged = true;
+          final int cost =
+              DateTime.now().difference(startTime).inMilliseconds;
+          logI('[VideoProxy] request success ${originUri.toString()} '
+              'cost:${cost}ms');
+        }
+        break;
       }
     } catch (e) {
       logW('⚠ ⚠ ⚠ Socket connections close: $e');

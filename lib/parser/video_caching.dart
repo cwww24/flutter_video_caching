@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter_hls_parser/flutter_hls_parser.dart';
 
+import '../download/download_cache_registry.dart';
+import '../ext/log_ext.dart';
 import '../ext/string_ext.dart';
 import '../ext/uri_ext.dart';
 import '../proxy/video_proxy.dart';
@@ -62,6 +64,44 @@ class VideoCaching {
   }) {
     return UrlParserFactory.createParser(url.toSafeUri())
         .precache(url, headers, cacheSegments, downloadNow, progressListen);
+  }
+
+  /// Pre-caches the given [url] by byte size.
+  ///
+  /// [cacheBytes]: Target bytes to cache (default ~500KB).
+  /// [concurrent]: Maximum concurrent chunk downloads.
+  /// [downloadNow]: Whether to download immediately or enqueue.
+  /// [progressListen]: Whether to listen to progress events.
+  static Future<StreamController<Map>?> precacheByte(
+    String url, {
+    Map<String, Object>? headers,
+    int cacheBytes = 500 * 1024,
+    int concurrent = 1,
+    int maxQueueTasks = 3,
+    bool downloadNow = true,
+    bool progressListen = false,
+  }) async {
+    final String key = url.toSafeUri().toString();
+    final registry = DownloadCacheRegistry();
+    if (!registry.startPrecacheByte(key)) {
+      logD('[VideoProxy] precacheByte skip duplicate: $url');
+      return null;
+    }
+    try {
+      if (cacheBytes <= 0) cacheBytes = 500 * 1024;
+      if (concurrent <= 0) concurrent = 1;
+      return await UrlParserFactory.createParser(url.toSafeUri()).precacheByte(
+        url,
+        headers,
+        cacheBytes,
+        concurrent,
+        maxQueueTasks,
+        downloadNow,
+        progressListen,
+      );
+    } finally {
+      registry.finishPrecacheByte(key);
+    }
   }
 
   /// Parses the HLS master playlist from the given [url].
@@ -130,4 +170,9 @@ class VideoCaching {
   /// });
   /// ```
   static Stream<int> get taskCountStream => VideoProxy.taskCountStream;
+
+  /// Returns cached video information snapshot.
+  static Future<List<CachedVideoInfo>> getCachedVideos() {
+    return DownloadCacheRegistry().snapshot();
+  }
 }

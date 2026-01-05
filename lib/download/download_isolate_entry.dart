@@ -98,7 +98,11 @@ class DownloadIsolate {
         } else {
           fileAppend = true;
         }
-        range += '${task.endRange}';
+        if ((task.endRange ?? 0) > 0) {
+          range += '${task.endRange}';
+        } else {
+          range += '${task.totalBytes - 1}';
+        }
       }
       // Add custom headers except 'host' and 'range'.
       if (task.headers != null) {

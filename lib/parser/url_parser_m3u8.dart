@@ -16,6 +16,7 @@ import '../ext/log_ext.dart';
 import '../ext/socket_ext.dart';
 import '../ext/string_ext.dart';
 import '../ext/uri_ext.dart';
+import '../global/config.dart';
 import '../proxy/video_proxy.dart';
 import 'url_parser.dart';
 
@@ -551,6 +552,84 @@ class UrlParserM3U8 implements UrlParser {
     }
 
     return _streamController;
+  }
+
+  /// Pre-cache by byte size with optional concurrency control.
+  @override
+  Future<StreamController<Map>?> precacheByte(
+    String url,
+    Map<String, Object>? headers,
+    int cacheBytes,
+    int concurrent,
+    int maxQueueTasks,
+    bool downloadNow,
+    bool progressListen,
+  ) async {
+    StreamController<Map>? controller =
+        progressListen ? StreamController<Map>() : null;
+    int targetBytes = cacheBytes <= 0 ? 500 * 1024 : cacheBytes;
+    int concurrentLimit = concurrent <= 0 ? 1 : concurrent;
+    int queueLimit = maxQueueTasks <= 0 ? 3 : maxQueueTasks;
+
+    final List<HlsSegment> segments = await parseSegment(
+      url.toSafeUri(),
+      headers,
+    );
+    if (segments.isEmpty) return controller;
+
+    final List<HlsSegment> selected = [];
+    int remaining = targetBytes;
+    for (final seg in segments) {
+      selected.add(seg);
+      int estimated = Config.segmentSize;
+      if (seg.endRange != null && seg.endRange! >= seg.startRange) {
+        estimated = seg.endRange! - seg.startRange + 1;
+      }
+      remaining -= estimated;
+      if (remaining <= 0) break;
+    }
+    if (selected.length > queueLimit) {
+      selected.removeRange(queueLimit, selected.length);
+    }
+
+    final String hlsKey = url.generateMd5;
+    int finished = 0;
+
+    Future<void> processSegment(HlsSegment seg) async {
+      final task = DownloadTask(
+        uri: seg.url.toSafeUri(),
+        hlsKey: hlsKey,
+        headers: headers,
+        startRange: seg.startRange,
+        endRange: seg.endRange,
+      );
+      Uint8List? data = await cache(task);
+      if (data == null) {
+        if (downloadNow) {
+          await download(task);
+        } else {
+          await push(task);
+          return;
+        }
+      }
+      finished += 1;
+      controller?.add({
+        'progress': finished / selected.length,
+        'segment_url': seg.url,
+        'parent_url': url,
+        'startRange': seg.startRange,
+        'endRange': seg.endRange,
+      });
+    }
+
+    for (int i = 0; i < selected.length; i += concurrentLimit) {
+      final List<HlsSegment> batch =
+          selected.skip(i).take(concurrentLimit).toList();
+      await Future.wait(batch.map(processSegment));
+    }
+
+    controller?.close();
+    return controller;
   }
 
   /// Parses M3U8 TS file segment URLs from the playlist at [uri].

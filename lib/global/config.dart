@@ -35,11 +35,6 @@ class Config {
   /// The size of each data segment (in bytes) for chunked operations.
   static int segmentSize = 2000000;
 
-  /// The size of the first segment (in bytes) for faster video startup.
-  /// This is typically smaller than [segmentSize] to reduce initial buffering time.
-  /// Default is the same as [segmentSize]. Set to a smaller value (e.g., 500KB) for faster startup.
-  static int firstSegmentSize = 2000000;
-
   /// A custom cache identifier string.
   static String customCacheId = 'Custom-Cache-ID';
 }

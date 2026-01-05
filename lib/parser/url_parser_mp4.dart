@@ -165,12 +165,9 @@ class UrlParserMp4 implements UrlParser {
     await socket.append(responseHeaders.join('\r\n'));
 
     bool downloading = true;
-    bool isFirstSegment = true;
     int startRange =
         requestRangeStart - (requestRangeStart % Config.segmentSize);
-    // Use firstSegmentSize for the first segment to speed up startup
-    int currentSegmentSize = Config.firstSegmentSize;
-    int endRange = startRange + currentSegmentSize - 1;
+    int endRange = startRange + Config.segmentSize - 1;
     int retry = 3;
     while (downloading) {
       DownloadTask task = DownloadTask(
@@ -220,12 +217,8 @@ class UrlParserMp4 implements UrlParser {
       });
       bool success = await socket.append(data);
       if (!success) downloading = false;
-      if (isFirstSegment) {
-        isFirstSegment = false;
-        currentSegmentSize = Config.segmentSize; // Use normal segment size for subsequent segments
-      }
-      startRange += currentSegmentSize;
-      endRange = startRange + currentSegmentSize - 1;
+      startRange += Config.segmentSize;
+      endRange = startRange + Config.segmentSize - 1;
       if (startRange > requestRangeEnd) {
         downloading = false;
       }
@@ -279,12 +272,9 @@ class UrlParserMp4 implements UrlParser {
     logD('content-length：$contentLength');
 
     bool downloading = true;
-    bool isFirstSegment = true;
     int startRange =
         requestRangeStart - (requestRangeStart % Config.segmentSize);
-    // Use firstSegmentSize for the first segment to speed up startup
-    int currentSegmentSize = Config.firstSegmentSize;
-    int endRange = startRange + currentSegmentSize - 1;
+    int endRange = startRange + Config.segmentSize - 1;
     int retry = 3;
     while (downloading) {
       DownloadTask task = DownloadTask(
@@ -334,12 +324,8 @@ class UrlParserMp4 implements UrlParser {
       });
       bool success = await socket.append(data);
       if (!success) downloading = false;
-      if (isFirstSegment) {
-        isFirstSegment = false;
-        currentSegmentSize = Config.segmentSize; // Use normal segment size for subsequent segments
-      }
-      startRange += currentSegmentSize;
-      endRange = startRange + currentSegmentSize - 1;
+      startRange += Config.segmentSize;
+      endRange = startRange + Config.segmentSize - 1;
       if (startRange > requestRangeEnd) {
         downloading = false;
       }
@@ -517,5 +503,79 @@ class UrlParserMp4 implements UrlParser {
       }
     }
     return _streamController;
+  }
+
+  /// Pre-cache by byte size with optional concurrency control.
+  @override
+  Future<StreamController<Map>?> precacheByte(
+    String url,
+    Map<String, Object>? headers,
+    int cacheBytes,
+    int concurrent,
+    int maxQueueTasks,
+    bool downloadNow,
+    bool progressListen,
+  ) async {
+    StreamController<Map>? controller =
+        progressListen ? StreamController<Map>() : null;
+    int targetBytes = cacheBytes <= 0 ? 500 * 1024 : cacheBytes;
+    int concurrentLimit = concurrent <= 0 ? 1 : concurrent;
+    int queueLimit = maxQueueTasks <= 0 ? 3 : maxQueueTasks;
+
+    final int contentLength = await head(url.toSafeUri(), headers: headers);
+    if (contentLength > 0 && targetBytes > contentLength) {
+      targetBytes = contentLength;
+    }
+
+    final List<DownloadTask> tasks = [];
+    final int chunkSize =
+        targetBytes < Config.segmentSize ? targetBytes : Config.segmentSize;
+    int start = 0;
+    while (start < targetBytes) {
+      int end = start + chunkSize - 1;
+      if (end >= targetBytes) end = targetBytes - 1;
+      tasks.add(DownloadTask(
+        uri: url.toSafeUri(),
+        headers: headers,
+        startRange: start,
+        endRange: end,
+      ));
+      start = end + 1;
+    }
+    if (tasks.length > queueLimit) {
+      tasks.removeRange(queueLimit, tasks.length);
+    }
+
+    int finished = 0;
+    Future<void> processTask(DownloadTask task) async {
+      Uint8List? data = await cache(task);
+      if (data == null) {
+        if (downloadNow) {
+          await download(task);
+        } else {
+          await push(task);
+          return;
+        }
+      }
+      finished += 1;
+      controller?.add({
+        'progress': finished / tasks.length,
+        'url': task.url,
+        'startRange': task.startRange,
+        'endRange': task.endRange,
+        'cachedBytes': task.endRange != null
+            ? task.endRange! - task.startRange + 1
+            : task.downloadedBytes,
+      });
+    }
+
+    for (int i = 0; i < tasks.length; i += concurrentLimit) {
+      final List<DownloadTask> batch =
+          tasks.skip(i).take(concurrentLimit).toList();
+      await Future.wait(batch.map(processTask));
+    }
+
+    controller?.close();
+    return controller;
   }
 }

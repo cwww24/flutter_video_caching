@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:synchronized/synchronized.dart';
 
 import '../cache/lru_cache_singleton.dart';
+import '../download/download_cache_registry.dart';
 import '../ext/file_ext.dart';
 import '../ext/gesture_ext.dart';
 import '../ext/log_ext.dart';
@@ -43,6 +44,9 @@ class DownloadIsolatePool {
 
   /// Stream controller for broadcasting task count updates to listeners.
   late final StreamController<int> _taskCountController;
+
+  /// Records last progress log time per task to throttle output.
+  final Map<String, DateTime> _lastProgressLogTime = {};
 
   /// Constructs a [DownloadIsolatePool] with the specified [poolSize].
   /// Throws an [ArgumentError] if the pool size is less than or equal to zero.
@@ -309,11 +313,13 @@ class DownloadIsolatePool {
           case IsolateMsgType.task:
             final task = message.data as DownloadTask;
             isolate.task = task;
+            DownloadCacheRegistry().updateFromTask(task);
             int taskIndex = _taskList.indexWhere((t) => t.id == task.id);
             if (taskIndex != -1) _taskList[taskIndex] = task;
             int isolateIndex =
                 _isolateList.indexWhere((i) => i.task?.id == task.id);
             if (isolateIndex != -1) _isolateList[isolateIndex] = isolate;
+            _logProgressIfNeeded(task);
             if (task.status == DownloadStatus.COMPLETED) {
               Uint8List netData = Uint8List.fromList(task.data);
               LruCacheSingleton().memoryPut(task.matchUrl, netData);
@@ -331,6 +337,7 @@ class DownloadIsolatePool {
             }
             if (task.status == DownloadStatus.FINISHED ||
                 task.status == DownloadStatus.FAILED) {
+              _lastProgressLogTime.remove(task.matchUrl);
               roundIsolate();
             }
             _streamController.sink.add(task);
@@ -343,5 +350,21 @@ class DownloadIsolatePool {
     // Prepares the file path for the isolate to use for saving the download.
     task.isolateSavePath = '${task.cacheDir}/${task.saveFileName}';
     isolate.controlPort?.send(DownloadIsolateMsg(IsolateMsgType.task, task));
+  }
+
+  void _logProgressIfNeeded(DownloadTask task) {
+    if (task.status != DownloadStatus.DOWNLOADING) return;
+    final DateTime now = DateTime.now();
+    final DateTime? last = _lastProgressLogTime[task.matchUrl];
+    if (last != null && now.difference(last).inMilliseconds < 500) return;
+    _lastProgressLogTime[task.matchUrl] = now;
+    final String totalText =
+        task.totalBytes > 0 ? '/${task.totalBytes}' : '';
+    final String rangeText = task.endRange != null
+        ? '${task.startRange}-${task.endRange}'
+        : '${task.startRange}-';
+    logD('[VideoProxy] downloading ${task.url} '
+        'range:$rangeText '
+        'bytes:${task.downloadedBytes}$totalText');
   }
 }
