@@ -5,6 +5,7 @@ import 'package:flutter_hls_parser/flutter_hls_parser.dart';
 
 import '../ext/string_ext.dart';
 import '../ext/uri_ext.dart';
+import '../proxy/video_proxy.dart';
 import 'url_parser.dart';
 import 'url_parser_factory.dart';
 import 'url_parser_m3u8.dart';
@@ -80,4 +81,53 @@ class VideoCaching {
         headers: headers, hlsKey: uri.generateMd5);
     return playlist is HlsMasterPlaylist ? playlist : null;
   }
+
+  /// Cancels all download tasks related to the specified video URL.
+  ///
+  /// This method stops all ongoing downloads for a video, including:
+  /// - Tasks matching the exact URL
+  /// - Tasks matching the cache key (matchUrl) for MP4 segments
+  /// - Tasks matching the HLS key for HLS segments
+  ///
+  /// [url]: The video URL to cancel all related tasks for.
+  /// [headers]: Optional HTTP headers used for matching tasks (for custom cache ID).
+  ///
+  /// This is useful when a video player is closed and you want to stop
+  /// all background downloads for that video.
+  static void cancelVideoTasks(String url, {Map<String, Object>? headers}) {
+    VideoProxy.downloadManager.cancelVideoTasks(url, headers: headers);
+  }
+
+  /// Returns the current total number of proxy tasks (including all statuses).
+  ///
+  /// Example usage:
+  /// ```dart
+  /// int count = VideoCaching.getTaskCount();
+  /// print('Current task count: $count');
+  /// ```
+  static int getTaskCount() {
+    return VideoProxy.getTaskCount();
+  }
+
+  /// Returns the current number of active (downloading) proxy tasks.
+  ///
+  /// Example usage:
+  /// ```dart
+  /// int activeCount = VideoCaching.getActiveTaskCount();
+  /// print('Active task count: $activeCount');
+  /// ```
+  static int getActiveTaskCount() {
+    return VideoProxy.getActiveTaskCount();
+  }
+
+  /// Returns a stream of task count updates.
+  /// Listeners will be notified whenever the number of tasks changes.
+  ///
+  /// Example usage:
+  /// ```dart
+  /// VideoCaching.taskCountStream.listen((count) {
+  ///   print('Task count changed to: $count');
+  /// });
+  /// ```
+  static Stream<int> get taskCountStream => VideoProxy.taskCountStream;
 }

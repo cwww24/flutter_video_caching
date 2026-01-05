@@ -19,6 +19,7 @@ class LocalProxyServer {
     // Set global config values if provided.
     Config.ip = ip ?? Config.ip;
     Config.port = port ?? Config.port;
+    _errorController = StreamController<Exception>.broadcast();
   }
 
   /// Proxy Server IP address.
@@ -29,6 +30,13 @@ class LocalProxyServer {
 
   /// The underlying server socket instance.
   ServerSocket? server;
+
+  /// Stream controller for broadcasting server errors.
+  StreamController<Exception>? _errorController;
+
+  /// Stream of server errors for listeners to subscribe to.
+  /// Listeners will be notified when the proxy server encounters an error or closes unexpectedly.
+  Stream<Exception> get onError => _errorController?.stream ?? const Stream.empty();
 
   /// Starts the proxy server.
   /// Binds to the configured IP and port, and listens for incoming connections.
@@ -42,20 +50,42 @@ class LocalProxyServer {
         retry();
       } else {
         startHealthCheck();
-        server?.listen(_handleConnection);
+        server?.listen(
+          _handleConnection,
+          onError: (error) {
+            logW('Proxy server error: $error');
+            _errorController?.add(Exception('Proxy server error: $error'));
+            retry();
+          },
+          onDone: () {
+            logW('Proxy server closed');
+            _errorController?.add(Exception('Proxy server closed unexpectedly'));
+            retry();
+          },
+        );
       }
     } on SocketException catch (e) {
       logW('Proxy server Socket close: $e');
+      _errorController?.add(e);
       // If the port is occupied (error code 98), increment port and retry.
       if (e.osError?.errorCode == 98) {
         Config.port = Config.port + 1;
         start();
+      } else {
+        retry();
       }
+    } catch (e) {
+      logW('Proxy server start error: $e');
+      _errorController?.add(Exception('Proxy server start error: $e'));
+      retry();
     }
   }
 
+  Timer? _healthCheckTimer;
+
   void startHealthCheck() {
-    Timer.periodic(Duration(seconds: 10), (timer) async {
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = Timer.periodic(Duration(seconds: 10), (timer) async {
       try {
         final socket = await Socket.connect(
           Config.ip,
@@ -65,7 +95,8 @@ class LocalProxyServer {
         socket.destroy();
         logD('Proxy server health check pass...');
       } catch (e) {
-        print('Server seems down: $e');
+        logW('Server seems down: $e');
+        _errorController?.add(Exception('Proxy server health check failed: $e'));
         retry();
       }
     });
@@ -79,7 +110,11 @@ class LocalProxyServer {
 
   /// Shuts down the proxy server and closes the socket.
   Future<void> close() async {
+    _healthCheckTimer?.cancel();
+    _healthCheckTimer = null;
     await server?.close();
+    await _errorController?.close();
+    _errorController = null;
   }
 
   /// Handles an incoming socket connection.

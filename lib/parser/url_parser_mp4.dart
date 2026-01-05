@@ -165,9 +165,12 @@ class UrlParserMp4 implements UrlParser {
     await socket.append(responseHeaders.join('\r\n'));
 
     bool downloading = true;
+    bool isFirstSegment = true;
     int startRange =
         requestRangeStart - (requestRangeStart % Config.segmentSize);
-    int endRange = startRange + Config.segmentSize - 1;
+    // Use firstSegmentSize for the first segment to speed up startup
+    int currentSegmentSize = Config.firstSegmentSize;
+    int endRange = startRange + currentSegmentSize - 1;
     int retry = 3;
     while (downloading) {
       DownloadTask task = DownloadTask(
@@ -217,8 +220,12 @@ class UrlParserMp4 implements UrlParser {
       });
       bool success = await socket.append(data);
       if (!success) downloading = false;
-      startRange += Config.segmentSize;
-      endRange = startRange + Config.segmentSize - 1;
+      if (isFirstSegment) {
+        isFirstSegment = false;
+        currentSegmentSize = Config.segmentSize; // Use normal segment size for subsequent segments
+      }
+      startRange += currentSegmentSize;
+      endRange = startRange + currentSegmentSize - 1;
       if (startRange > requestRangeEnd) {
         downloading = false;
       }
@@ -272,9 +279,12 @@ class UrlParserMp4 implements UrlParser {
     logD('content-length：$contentLength');
 
     bool downloading = true;
+    bool isFirstSegment = true;
     int startRange =
         requestRangeStart - (requestRangeStart % Config.segmentSize);
-    int endRange = startRange + Config.segmentSize - 1;
+    // Use firstSegmentSize for the first segment to speed up startup
+    int currentSegmentSize = Config.firstSegmentSize;
+    int endRange = startRange + currentSegmentSize - 1;
     int retry = 3;
     while (downloading) {
       DownloadTask task = DownloadTask(
@@ -324,8 +334,12 @@ class UrlParserMp4 implements UrlParser {
       });
       bool success = await socket.append(data);
       if (!success) downloading = false;
-      startRange += Config.segmentSize;
-      endRange = startRange + Config.segmentSize - 1;
+      if (isFirstSegment) {
+        isFirstSegment = false;
+        currentSegmentSize = Config.segmentSize; // Use normal segment size for subsequent segments
+      }
+      startRange += currentSegmentSize;
+      endRange = startRange + currentSegmentSize - 1;
       if (startRange > requestRangeEnd) {
         downloading = false;
       }

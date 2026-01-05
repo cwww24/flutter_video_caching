@@ -41,6 +41,9 @@ class DownloadIsolatePool {
   /// Stream controller for broadcasting download task updates to listeners.
   late final StreamController<DownloadTask> _streamController;
 
+  /// Stream controller for broadcasting task count updates to listeners.
+  late final StreamController<int> _taskCountController;
+
   /// Constructs a [DownloadIsolatePool] with the specified [poolSize].
   /// Throws an [ArgumentError] if the pool size is less than or equal to zero.
   DownloadIsolatePool({int poolSize = MAX_ISOLATE_POOL_SIZE})
@@ -49,10 +52,15 @@ class DownloadIsolatePool {
       throw ArgumentError('Pool size must be greater than 0');
     }
     _streamController = StreamController.broadcast();
+    _taskCountController = StreamController.broadcast();
   }
 
   /// Returns the stream controller for task updates.
   StreamController<DownloadTask> get streamController => _streamController;
+
+  /// Returns a stream of task count updates.
+  /// Listeners will be notified whenever the number of tasks changes.
+  Stream<int> get taskCountStream => _taskCountController.stream;
 
   /// Returns the list of all tasks in the pool.
   List<DownloadTask> get taskList => _taskList;
@@ -67,6 +75,13 @@ class DownloadIsolatePool {
 
   /// Returns the maximum number of isolates in the pool.
   int get poolSize => _poolSize;
+
+  /// Notifies listeners about task count changes.
+  void notifyTaskCountChange() {
+    if (!_taskCountController.isClosed) {
+      _taskCountController.sink.add(_taskList.length);
+    }
+  }
 
   /// Disposes the pool, cancels all subscriptions, kills all isolates,
   /// closes ports and the stream controller, and resets task IDs.
@@ -83,6 +98,7 @@ class DownloadIsolatePool {
     _isolateList.clear();
     _taskList.clear();
     await _streamController.close();
+    await _taskCountController.close();
     DownloadTask.resetId();
   }
 
@@ -121,6 +137,7 @@ class DownloadIsolatePool {
     }
     task.saveFile = task.saveFile;
     _taskList.add(task);
+    notifyTaskCountChange();
     return task;
   }
 
@@ -302,6 +319,7 @@ class DownloadIsolatePool {
               LruCacheSingleton().memoryPut(task.matchUrl, netData);
               if (taskIndex != -1) _taskList.removeAt(taskIndex);
               if (isolateIndex != -1) _isolateList[isolateIndex].reset();
+              notifyTaskCountChange();
             }
             if (task.status == DownloadStatus.FINISHED && task.file != null) {
               LruCacheSingleton().storagePut(task.matchUrl, task.file!);
@@ -309,6 +327,7 @@ class DownloadIsolatePool {
             if (task.status == DownloadStatus.FAILED) {
               if (taskIndex != -1) _taskList.removeAt(taskIndex);
               if (isolateIndex != -1) _isolateList[isolateIndex].reset();
+              notifyTaskCountChange();
             }
             if (task.status == DownloadStatus.FINISHED ||
                 task.status == DownloadStatus.FAILED) {
